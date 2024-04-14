@@ -1,19 +1,35 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <windows.h>
+#include <stdbool.h>
 
 #define BUFFER_SIZE 512
 #define SHELL_TOKENS 128
+#define SHELL_COMMANDS 1
 #define TOKEN_DELIMITERS " \n\t\a\r"
 
 #define SKIP_WHITESPACE(p_c) while (*p_c == ' ' || *p_c == '\t' || *p_c == '\n') p_c++
 
+bool run_shell = true;
 char *__temp_token_pos = NULL;
 
 static void shell_loop(void);
+static bool run_command(char **token);
+static bool launch_process(char *args[]);
 static char **parse_tokens(char *line, int *p_num_tokens);
-static char *_shell_read_line(void);
+static char *_shell_read_line(unsigned int *chars);
 static char *_get_token(char *buffer);
+int _shell_exit(char **args);
+
+char *shell_commands[SHELL_COMMANDS] = {
+    "exit"
+};
+
+int (*shell_functions[SHELL_COMMANDS])(char **) = {
+    _shell_exit
+};
+
 
 int main(int argc, char *argv[]) {
     shell_loop();
@@ -22,14 +38,68 @@ int main(int argc, char *argv[]) {
 
 static void shell_loop(void) {
     int num_tokens;
-    printf(">> ");
-    char *line = _shell_read_line();
-    char **tokens = parse_tokens(line, &num_tokens);
+    unsigned int num_chars = 0;
+    bool ran_command = false, ran_process = false;
 
-    free(line);
-    free(tokens);
+    while(run_shell) {
+        printf(">> ");
+        char *line = _shell_read_line(&num_chars);
+        char *striped_line = line;
+        SKIP_WHITESPACE(striped_line);
+        
+        if (strlen(striped_line) > 0) {
+            char buffer[num_chars + 1];
+            memset(buffer, 0, num_chars + 1);
+            strncpy(buffer, line, num_chars);
+
+            char **tokens = parse_tokens(buffer, &num_tokens);
+            ran_command = run_command(tokens);
+            if (!ran_command) {
+                ran_process = launch_process(&striped_line);
+                if (!ran_process) fprintf(stderr, "Unknown file or cmd \"%s\"\n", tokens[0]);
+            } 
+            free(tokens);
+        }
+        free(line);
+    }
 }
 
+static bool run_command(char **tokens) {
+    for (int i = 0; i < SHELL_COMMANDS; i++) {
+        if (!strcmp(tokens[0], shell_commands[i])) {
+            bool status = shell_functions[i](tokens);
+            return status;
+        }
+    }
+    return false;
+}
+
+static bool launch_process(char *args[]) {
+    STARTUPINFO startup_info;
+    PROCESS_INFORMATION process_info;
+
+    ZeroMemory(&startup_info, sizeof(startup_info));
+    ZeroMemory(&process_info, sizeof(process_info));
+    startup_info.cb = sizeof(startup_info);
+
+    BOOL status = CreateProcess(NULL, *args,
+                                NULL, NULL, FALSE,
+                                0, NULL, NULL,
+                                &startup_info, &process_info);
+    if (!status) {
+        printf("Process creation failed error: (%d)\n", GetLastError());
+        return 0;
+    }
+
+    WaitForSingleObject(process_info.hProcess, INFINITE);
+
+    CloseHandle(process_info.hProcess);
+    CloseHandle(process_info.hThread);
+    return 1;
+}
+
+// Parse a line feed and return an array of tokens (char **)
+// Tokens are recieved from _get_token function
 static char **parse_tokens(char *line, int *p_num_tokens) {
     unsigned int token_index = 0, token_buffer_size = SHELL_TOKENS;
     char **tokens = calloc(token_buffer_size, sizeof(char *));
@@ -37,7 +107,6 @@ static char **parse_tokens(char *line, int *p_num_tokens) {
         fprintf(stderr, "Error Allocating space for tokens");
         exit(1);
     }
-    // tokens[token_index] = strtok(line, TOKEN_DELIMITERS);
     tokens[token_index] = _get_token(line);
     while (tokens[token_index]) {
         token_index++;
@@ -49,17 +118,14 @@ static char **parse_tokens(char *line, int *p_num_tokens) {
             }
             token_buffer_size += SHELL_TOKENS;
         }
-        // tokens[token_index] = strtok(NULL, TOKEN_DELIMITERS);
         tokens[token_index] = _get_token(NULL);
     }
     *p_num_tokens = token_index;
-    for (int i = 0; i < token_index; i++) printf("[\"%s\"] ", tokens[i]);
-    printf("\n");
-    printf("%d\n", token_index);
     return tokens;
 }
 
-static char *_shell_read_line(void) {
+// Reads in a line feed from user and returns it as char *
+static char *_shell_read_line(unsigned int *chars) {
     int c;
     unsigned int num_c = 0, buffer_size = BUFFER_SIZE;
     char *buffer = calloc(1, BUFFER_SIZE);
@@ -80,9 +146,14 @@ static char *_shell_read_line(void) {
         }
     }
     buffer[num_c] = '\0';
+    *chars = num_c;
     return buffer;
 }
 
+// Modifies the original line buffer and returns a token as char *
+// puts null bytes where the tokens are separated
+// each call returns a token from the buffer provided
+// returns another token from previous buffer if buffer == NULL
 static char *_get_token(char *buffer) {
     if (!buffer && !__temp_token_pos) return NULL;
     if (buffer) __temp_token_pos = buffer;
@@ -107,4 +178,9 @@ static char *_get_token(char *buffer) {
     *__temp_token_pos = '\0';
     __temp_token_pos++;
     return p_left;
+}
+
+int _shell_exit(char **args) {
+    run_shell = false;
+    return 1;
 }
