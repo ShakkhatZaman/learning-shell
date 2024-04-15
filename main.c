@@ -6,7 +6,7 @@
 
 #define BUFFER_SIZE 512
 #define SHELL_TOKENS 128
-#define SHELL_COMMANDS 2
+#define SHELL_COMMANDS 4
 #define TOKEN_DELIMITERS " \n\t\a\r"
 
 #define SKIP_WHITESPACE(p_c) while (*p_c == ' ' || *p_c == '\t' || *p_c == '\n') p_c++
@@ -24,13 +24,15 @@ static char *_shell_read_line(unsigned int *chars);
 static char *_get_token(char *buffer);
 int _shell_exit(char **args);
 int _shell_pwd(char **args);
+int _shell_cd(char **args);
+int _shell_ls(char **args);
 
 char *shell_commands[SHELL_COMMANDS] = {
-    "exit", "pwd"
+    "exit", "pwd", "cd", "ls"
 };
 
 int (*shell_functions[SHELL_COMMANDS])(char **) = {
-    _shell_exit, _shell_pwd
+    _shell_exit, _shell_pwd, _shell_cd, _shell_ls
 };
 
 
@@ -62,7 +64,7 @@ static void shell_loop(void) {
         char **tokens = parse_tokens(buffer, &num_tokens);
         ran_command = run_command(tokens);
 
-        if (!ran_command) {
+        if (ran_command == 0) {
             ran_process = launch_process(&striped_line);
             if (!ran_process) fprintf(stderr, "Unknown file or cmd \"%s\"\n", tokens[0]);
         } 
@@ -106,9 +108,10 @@ static bool launch_process(char *args[]) {
 }
 
 static void shell_init(void) {
-    int num_chars = GetCurrentDirectory(0, NULL);
+    int num_chars = 256;
     __current_directory = calloc(num_chars, 1);
     GetCurrentDirectory(num_chars, __current_directory);
+    
 }
 
 // Parse a line feed and return an array of tokens (char **)
@@ -201,5 +204,57 @@ int _shell_exit(char **args) {
 
 int _shell_pwd(char **args) {
     printf("%s\n", __current_directory);
+    return 1;
+}
+
+int _shell_cd(char **args) {
+    int status = SetCurrentDirectory(args[1]);
+    if (!status) {
+        fprintf(stderr, "Error changing to directory \"%s\"\n", args[1]);
+        return -1;
+    }
+    int num_chars = GetCurrentDirectory(0, NULL);
+    __current_directory = realloc(__current_directory, num_chars);
+    GetCurrentDirectory(num_chars, __current_directory);
+    return 1;
+}
+
+int _shell_ls(char **args) {
+    unsigned int path_length = 0;
+    char *dir_path = NULL;
+    if (args[1]) {
+        path_length = strlen(__current_directory) + strlen("\\\\*.*") + strlen(args[1]) + 1;
+        dir_path = calloc(path_length, 1);
+        sprintf(dir_path, "%s\\%s\\*.*", __current_directory, args[1]);
+    }
+    else {
+        path_length = strlen(__current_directory) + strlen("\\*.*") + 1;
+        dir_path = calloc(path_length, 1);
+        sprintf(dir_path, "%s\\*.*", __current_directory);
+    }
+    // unsigned int path_length = strlen("\\*.*") + 1;
+    // sprintf(dir_path, ".\\*.*");
+    dir_path[path_length - 1] = '\0';
+
+    WIN32_FIND_DATA find_data;
+    HANDLE find_handle = FindFirstFile(dir_path, &find_data);
+    if (find_handle == INVALID_HANDLE_VALUE) {
+        fprintf(stderr, "Error finding first file\n");
+        free(dir_path);
+        return -1;
+    }
+    printf("Type      ||    Name\n");
+
+    do {
+        if (find_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            printf("Directory : %s\n", find_data.cFileName);
+        }
+        else {
+            printf("File :      %s\n", find_data.cFileName);
+        }
+    } while (FindNextFile(find_handle, &find_data));
+    FindClose(find_handle);
+
+    free(dir_path);
     return 1;
 }
