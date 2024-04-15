@@ -6,14 +6,16 @@
 
 #define BUFFER_SIZE 512
 #define SHELL_TOKENS 128
-#define SHELL_COMMANDS 1
+#define SHELL_COMMANDS 2
 #define TOKEN_DELIMITERS " \n\t\a\r"
 
 #define SKIP_WHITESPACE(p_c) while (*p_c == ' ' || *p_c == '\t' || *p_c == '\n') p_c++
 
 bool run_shell = true;
+char *__current_directory = NULL;
 char *__temp_token_pos = NULL;
 
+static void shell_init(void);
 static void shell_loop(void);
 static bool run_command(char **token);
 static bool launch_process(char *args[]);
@@ -21,13 +23,14 @@ static char **parse_tokens(char *line, int *p_num_tokens);
 static char *_shell_read_line(unsigned int *chars);
 static char *_get_token(char *buffer);
 int _shell_exit(char **args);
+int _shell_pwd(char **args);
 
 char *shell_commands[SHELL_COMMANDS] = {
-    "exit"
+    "exit", "pwd"
 };
 
 int (*shell_functions[SHELL_COMMANDS])(char **) = {
-    _shell_exit
+    _shell_exit, _shell_pwd
 };
 
 
@@ -40,26 +43,30 @@ static void shell_loop(void) {
     int num_tokens;
     unsigned int num_chars = 0;
     bool ran_command = false, ran_process = false;
+    shell_init();
 
     while(run_shell) {
         printf(">> ");
         char *line = _shell_read_line(&num_chars);
         char *striped_line = line;
         SKIP_WHITESPACE(striped_line);
-        
-        if (strlen(striped_line) > 0) {
-            char buffer[num_chars + 1];
-            memset(buffer, 0, num_chars + 1);
-            strncpy(buffer, line, num_chars);
-
-            char **tokens = parse_tokens(buffer, &num_tokens);
-            ran_command = run_command(tokens);
-            if (!ran_command) {
-                ran_process = launch_process(&striped_line);
-                if (!ran_process) fprintf(stderr, "Unknown file or cmd \"%s\"\n", tokens[0]);
-            } 
-            free(tokens);
+        if (strlen(striped_line) < 1) {
+            free(line);
+            continue;
         }
+
+        char buffer[num_chars + 1];
+        memset(buffer, 0, num_chars + 1);
+        strncpy(buffer, line, num_chars);
+
+        char **tokens = parse_tokens(buffer, &num_tokens);
+        ran_command = run_command(tokens);
+
+        if (!ran_command) {
+            ran_process = launch_process(&striped_line);
+            if (!ran_process) fprintf(stderr, "Unknown file or cmd \"%s\"\n", tokens[0]);
+        } 
+        free(tokens);
         free(line);
     }
 }
@@ -87,7 +94,7 @@ static bool launch_process(char *args[]) {
                                 0, NULL, NULL,
                                 &startup_info, &process_info);
     if (!status) {
-        printf("Process creation failed error: (%d)\n", GetLastError());
+        printf("Process creation failed. Error: (%d)\n", GetLastError());
         return 0;
     }
 
@@ -96,6 +103,12 @@ static bool launch_process(char *args[]) {
     CloseHandle(process_info.hProcess);
     CloseHandle(process_info.hThread);
     return 1;
+}
+
+static void shell_init(void) {
+    int num_chars = GetCurrentDirectory(0, NULL);
+    __current_directory = calloc(num_chars, 1);
+    GetCurrentDirectory(num_chars, __current_directory);
 }
 
 // Parse a line feed and return an array of tokens (char **)
@@ -182,5 +195,11 @@ static char *_get_token(char *buffer) {
 
 int _shell_exit(char **args) {
     run_shell = false;
+    free(__current_directory);
+    return 1;
+}
+
+int _shell_pwd(char **args) {
+    printf("%s\n", __current_directory);
     return 1;
 }
